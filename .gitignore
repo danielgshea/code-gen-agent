@@ -16,3 +16,5 @@ wheels/
 *.pem
 *.key
 credentials.json
+.langgraph_api
+.claude

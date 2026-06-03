@@ -1,20 +1,22 @@
 """Publish the agent's prompt, skills, and seed memory to LangSmith.
 
 Run once (and again whenever you want to reset the seeds) to populate:
-  - the **Prompt Hub** with the system prompt, and
-  - two **Context Hub** agent repos with the skills and the seed memory.
+  - the **Prompt Hub** with the system prompt,
+  - one **Context Hub skill repo** per skill under assets/skills/, and
+  - a **Context Hub agent repo** with the seed memory.
 
-After this, the agent pulls its prompt from the Hub at construction and reads
-`/skills/` + `/memory/` from the Context Hub at runtime. Thereafter, edit the
-prompt in the Playground and let the agent rewrite its own memory — no redeploy.
+After this, the agent pulls its prompt and skills from the Hub at construction
+and reads `/memory/` from the Context Hub at runtime. Thereafter, edit the prompt
+in the Playground and let the agent rewrite its own memory — no redeploy.
 
-    uv run --env-file .env python scripts/bootstrap_hub.py
-
+    uv run --env-file .env python -m scripts.bootstrap_hub  
+    
 Requires a workspace-scoped LANGSMITH_API_KEY.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -22,7 +24,10 @@ from langsmith import Client
 from langsmith.schemas import FileEntry
 
 from code_gen_agent.prompt import PROMPT_REPO
-from code_gen_agent.sandbox import MEMORY_REPO, SKILLS_REPO
+
+# Read the memory repo name directly (same default as agent.py) so this script
+# doesn't import the agent module, whose import connects to the sandbox.
+MEMORY_REPO = os.environ.get("CODE_GEN_MEMORY_REPO", "code-gen-agent-memory")
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
@@ -45,17 +50,17 @@ def main() -> None:
     )
     print(f"Pushed prompt   -> {PROMPT_REPO}\n  {url}")
 
-    # 2. Skills -> Context Hub agent repo, laid out as <skill>/SKILL.md.
-    skill_files: dict[str, FileEntry] = {}
+    # 2. Skills -> Context Hub, one standalone skill repo per assets/skills/<name>.
+    #    (Skills authored elsewhere in the hub, e.g. `shared-workspace`, are not
+    #    seeded here — the agent just pulls them by name.)
     for skill_md in (ASSETS / "skills").rglob("SKILL.md"):
-        rel = skill_md.relative_to(ASSETS / "skills").as_posix()
-        skill_files[rel] = _file_entry(skill_md)
-    client.push_agent(
-        SKILLS_REPO,
-        files=skill_files,
-        description="Skills for the Python code-generation agent.",
-    )
-    print(f"Pushed skills   -> {SKILLS_REPO}: {sorted(skill_files)}")
+        name = skill_md.parent.name
+        client.push_skill(
+            name,
+            files={"SKILL.md": _file_entry(skill_md)},
+            description=f"{name} skill for the Python code-generation agent.",
+        )
+        print(f"Pushed skill    -> {name}")
 
     # 3. Seed memory -> Context Hub agent repo. The agent edits this at runtime.
     memory_files = {
